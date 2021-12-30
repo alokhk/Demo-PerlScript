@@ -1,0 +1,202 @@
+
+#first search the nexus-mechperf.x.logs to check if the overrides are being used and print  out a list of the overrides and the logs they are found in. These overrides wont be renamedso no need to worry about the recipes they are  being used in. The ones that are not listed in the above search are the ones that will be renamed and hence we need to search for these overrides in the recipe files to ensure it doesnt cause any problems. The script does three things. Round One: search for override sets in the nexus-mechperf.log. If found print it to the output file. If not found, store it first in a list and then put it to file. Round Two: Take the overrides stored in that list and search through the recipes with them as the search string. If found, print override set name and recipe name to output file. If not found, store those overrides in another list. This list (Round three) has override sets that are neither in the logs, nor in the recipes. These can be renamed.
+
+use strict;
+
+my $flag=0;
+my $flagx=0;
+################################################################################
+###This part generates a list of log files that need to be searched#############
+################################################################################
+open (LOG,">loglist.txt");															#loglist file holds the nexus-mechperf logs that need to be searched.
+my $logdir="c:/VXToverride/";												#set path for log files.
+opendir(logDIR,"$logdir");															#read directory contents
+my @loglist = readdir(logDIR);														# and store file names in a list.
+my $logfile;
+foreach $logfile (@loglist)															#for each of those log files,
+{
+  if ($logfile=~/nexus-mechperf*/)													#if its names is nexus-mechperf...log
+  {
+    print LOG "$logfile\n";															#we're interested.
+  }
+}
+close (LOG);
+################################################################################
+
+
+################################################################################
+###This part generates a list of recipe files that need to be searched##########
+################################################################################
+open (RCP,">rcplist.txt");															#same as above, but for recipes. filename needs to end in recipe.xml
+my $rcpdir="c:/VXToverride/";
+opendir(rcpDIR,"$rcpdir");
+my @rcplist = readdir(rcpDIR);
+my $rcpfile;
+foreach $rcpfile (@rcplist)
+{
+  if ($rcpfile =~ m/recipe.xml$/)
+  {
+    print RCP "$rcpfile\n";
+  }
+}
+close (RCP);
+################################################################################
+
+
+################################################################################
+########Sub routine to search for a given override set in a given log###########
+################################################################################
+sub searchlogs																		#subroutine to search for a given override set in a given log.
+{
+	my $theoverride; my $thelog;											#store the parameters passed from the calling function
+  ($theoverride,$thelog) = @_;
+  open (tLOG,"$thelog");															#open the log file thats in focus now
+  while ( ! eof (tLOG) )															#when there's still stuff left,
+  {
+    my $logentry=<tLOG>;															#read each line
+    chomp($logentry);
+    $logentry =~ s/\+/plus/;
+    if ($logentry =~ m/$theoverride/)												#if that line has a ref to an override set, override is being used by customer.
+    {
+       $theoverride=~s/plus/\+/;
+       print OUT "$theoverride:$thelog\n";											#print this to file and
+      $flag=1;																		#exclude this override set from further searches. Since its used, we will not delete this.
+      last;																			#dont scan the rest of the file for the same override set.
+    }
+  }
+  close(tLOG);
+}
+################################################################################
+
+
+################################################################################
+##Sub routine to search for a override set, not found in log, in a recipe#######
+################################################################################
+sub searchrecipe																	#subroutine that does the same thing as above but for recipes.
+{
+  my $theoverride2; my $therecipe;
+  ($theoverride2,$therecipe) = @_;
+  open (tRCP,"c:/VXToverride/$therecipe");
+  while ( ! eof (tRCP) )
+  {
+    my $rcpentry=<tRCP>;
+    chomp($rcpentry);
+    $rcpentry=~s/\+/plus/;
+    if ($rcpentry =~ m/$theoverride2/)
+    {
+      $theoverride2=~s/plus/\+/;
+      print OUT "$theoverride2:$therecipe\n";
+      $flagx=1;
+      last;
+    }
+  }
+  close(tRCP);
+}
+################################################################################
+
+
+################################################################################
+###These methods maintains a list of override sets not found in the log search, and in the recipe search####
+################################################################################
+my @oversec;																		#oversec = Override +Second time search!!! :(
+my %seen;
+sub update_oversec																	#subroutine that stores an override set in a list if that override set is not found in the logs.
+{
+  my @tempoverride = @_;															#put it into an array.
+  my $xx;
+  foreach $xx (@tempoverride) {
+  push (@oversec, $xx) unless ($seen{$xx}++); }										#and push it onto the list if and only if, it doesnt already exist in the list.
+}
+my @oversec2;
+my %seen2;
+sub update_oversec2																	#same as above, but for the next round. Round three of printing
+{
+  my @tempoverride2 = @_;
+  my $xx2;
+  foreach $xx2 (@tempoverride2) {
+  push (@oversec2, $xx2) unless ($seen2{$xx2}++); }
+}
+################################################################################
+
+
+
+################################################################################
+###########This is the main part of the script##################################
+################################################################################
+
+
+
+print "Starting the search now. This may take upto 8 or 15 minutes depending on the number of log files\n";
+open (OVR,"overrides.txt");															#list of overides that need to be renamed.
+open (nOUT,">oversec.txt");															#list of overrides that are not found in the logs
+open (OUT, ">searchresults.txt");													#final result is in this file.
+print OUT "-----------------------------------------------------------------\n";
+print OUT "-----------------DONT RENAME THESE OVERRIDE SETS-----------------\n";
+print OUT "-----------------------------------------------------------------\n";
+while ( !eof(OVR) )																	#until all the overrides have been used
+{
+  my $override=<OVR>;                               													#read one at a time
+  $override=~s/\+/plus/;
+  chomp($override);																	#chop off the CR
+  open (LOG,"loglist.txt");															#open the list of logs that need to be searched.
+  $flag=0;
+  while (!eof (LOG) )																#while there are still logs that need to be scanned
+  {
+    my $logfile=<LOG>;																#read the name of each log
+    chomp ($logfile);																#cut the CR
+    searchlogs($override,$logfile);													#search for the override selected in the logfile selected
+  if($flag==1)																		#if search is successful, dont scan the rest of the file
+  { last; }
+  }
+  if($flag==0)																		#if search is not successful, then
+  {
+    $override=~s/plus/\+/;
+	update_oversec($override);														#put the name of the override set in a list. We'll use this list later to check if its used in recipes
+  }
+}
+close(OVR);																			#once ALL overrides have been searched in ALL logs, close the files.
+close(LOG);
+print "Finished searching log files. Searching recipes now. Please wait...\n";
+my $x;
+foreach $x (@oversec)																#this list holds the override set names that are not found in the logs
+{
+  print nOUT "$x\n";																#print it out to a file for later use
+}
+close (nOUT);
+print OUT "-----------------------------------------------------------------\n\n\n";
+print OUT "-----------------------------------------------------------------\n";
+print OUT "----THE BELOW OVERRIDE SETS ARE USED IN THE FOLLOWING RECIPES----\n";
+print OUT "----------RECIPES WILL NEED TO BE UPDATED AFTER RENAMING---------\n";
+print OUT "-----------------------------------------------------------------\n";
+open (nOUT,"oversec.txt");
+while ( ! eof(nOUT) )																#while there are still overrides that need to be searched in recipes,
+{
+  my $override2=<nOUT>;
+  $override2=~s/\+/plus/;															#read each override set
+  chomp ($override2);																#cut the CR
+  open (RCP, "rcplist.txt");														# and open the list of recipes that need to be searched for the above override set
+  $flagx=0;
+  while ( !eof(RCP) )																#while there are still recipes left
+  {
+    my $rcpfile=<RCP>;																#get the name of the first recipe
+    chomp ($rcpfile);
+    searchrecipe($override2,$rcpfile);												#and search for the first overide in that recipe
+    if($flagx==1) {next;}															#if found, then dont scan the rest of the recipe, move on to the next one.
+  }
+  if($flagx==0)																		#if not found, then override set is not seen in logs, nor is it used in recipes
+  {
+    $override2=~s/plus/\+/;
+	update_oversec2($override2);													#so store it in an another list. we can delete the overrides in this list without worry.
+  }
+}
+print OUT "-----------------------------------------------------------------\n\n\n";
+print OUT "-----------------------------------------------------------------\n";
+print OUT "--------------THE BELOW OVERRIDE SETS CAN BE RENAMED-------------\n";
+print OUT "-----------------------------------------------------------------\n";
+my $x3;
+foreach $x3(@oversec2)																#print out the list of overrides that can be renamed without any harm as above.
+{
+  print OUT "$x3\n";
+}
+print "Finished! Please view the searchresults.txt file for results\n";
+################################################################################
