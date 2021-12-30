@@ -1,0 +1,244 @@
+# Perl script to parse xml data from IFA trace report for Benchmarking purposes
+
+#The general idea of the program is to open the xml file and read all contents into memory.
+#then process each line depending on the data it has. Inital processing will get rid of unwanted data and retain only the trace reports.
+
+
+#Code Begins.
+
+use strict;																			#declaration must before usage.
+if ( $#ARGV > 0)																	#cant handle more than one file at once.
+{
+	die "Due to memory constraints, cannot parse more than one file, sorry!\n";		#error out and terminate.
+}
+
+
+if ( ! open (XML, "$ARGV[0]") ) {  													#XML is the file handle for the input file,  open XML is read only.
+die "Cannot open file! : $! \n";													#if unable to open, error
+}
+else {												
+print "Opened file $ARGV[0]\n";														#else post user info
+}
+
+if ( ! open ( TMP, ">out.txt" ) ) {													#TMP is the file handle on the intermediate file. I am doing this as a sort of 
+die "Error : $! \n";															 	#preprocessing the XML to contain only relevant data. open TMP in write mode.
+}
+print "Loading file into memory\n";
+my @all = <XML>; 																	# all is an array that holds all the lines in the file
+print "Finished loading, parsing file, please wait...\n";																	
+my $count;																			#counter for number of matches		
+my $i = 0; 																			#index variable for array all.
+my $g = 0;																			#g is index to handle file naming.
+
+sub copy 																			#this method copies the lines between <TraceReport> and </TraceReport> to the TMP file.
+{
+	$i++;																			#when control enters for the first time, index still points to <TraceReport> line, so increment.
+	until ( $all[$i] =~ /\/TraceReport/ ) 											#until control encounters the close tag </TraceReport>
+	{
+		print TMP "$all[$i]";														#copy each line to TMP
+		$i++;																		#and loop.
+	}
+	print TMP "$all[$i]";															#when control comes here, index still points to the </TraceReport> line, so copy to TMP.
+	return;
+}
+
+for ( $i=0; $i<=$#all; $i++) 														#run through each line in the file
+{														
+	if ( $all[$i] =~ /<TraceReport/ )												#if the line has a <TraceReport>, then
+	{
+		print TMP "$all[$i]";														#output that line.
+		$count++;																	#increment trace count.
+		copy();																		#call methode copy to copy the rest of the trace to the TMP.
+	}
+		
+}
+
+close(XML);																			#close the XML file
+close(TMP);																			#close the TMP file
+
+
+if ( ! open ( TMP, "out.txt" ) ) 													#opening TMP in read only mode to parse further.
+{
+	die "Unable to open the TMP file : $!\n";
+}
+my $filnum;																			#filnum holds the xxxx.xml.X's X part when a large file is split
+my $size;																			#array size when filename is split
+my $file;																			#output file name-holder
+my $filename = "$ARGV[0]";															#read the input file name into var
+my @filearr = split (/\./, $filename);												#split filename and extension
+$size = $#filearr+1;																#calc array size
+if ( $size eq 2 )																	#if of the form xxxx.xml
+{
+	pop (@filearr);																	#discard the xml				
+	$filename=pop(@filearr);														#store the xxxx
+	$file="$filename.csv";															#append .csv and form output file name
+}
+if ( $size eq 3)																	#if of the form xxx.xml.XX	
+{
+	$filnum = pop (@filearr);														#store the XX ie the file number
+	for ($g=1; $g<$size; $g++)
+	{
+	$filename=pop (@filearr);														#pop the remaining contents of the array till you get to the first element.
+	$file="$filename-$filnum.csv";													#store output filename as xxx-XX.csv
+	}
+}
+		
+print "Still parsing...\n";
+
+if ( ! open ( OUT, ">$file" ) )														#create output file
+{
+	die "Unable to create output file!! : $!";
+}
+
+# Now that the file is open, read all lines into an array as before. Once read, loop through each line and copy it to a string variable.
+#Split the string variable into name=value pairs based on white space as the delimiter and copy them into an array.
+#Once done count the number of name=value pairs and pop them into discrete variables
+#Write the variables that constitute meaningful data to the output files.
+#Output file is CSV with reporttime, trace id and data.
+
+my @tmp = <TMP>;																	#read contents of inermediate file into array tmp.
+my $master;																			#trace count to ensure no traces are missed
+my $traceid;																		#traceid
+sub ltrim($)																		#method to strip whitespaces in variables.
+{
+	my $string = shift;																
+	$string =~ s/^\s+//;
+	return $string;
+}
+
+sub trunc {																			#method to remove decimal places from seconds
+        my ($num, $places) = @_;
+        my ($int, $frac) = split /\./, $num;
+        return $num if length $frac == $places;
+        if ($places > length $frac) {
+                $frac .= "0" x $places;
+        }
+        $frac = substr $frac, 0, $places;
+        return "${int}.${frac}" if $frac;
+        return $int;
+}
+
+print OUT "TraceId,TraceId,TraceId,TraceId, CollectionTime, Data,";
+for ( $i=0; $i<=$#tmp; $i++) 														#run through each line in the file
+{
+	if ($tmp[$i] =~ /<\/TraceReport/ )												#if line is </TraceReport>, increment pointer do nothing.
+	{
+		$i++;
+	}
+	if ( $tmp[$i] =~ /<TR collectionTime/ )											#if line is a collection report, then 
+	{
+		my $out = "$tmp[$i]";														#format the output and write to file
+		$out = ltrim ($out);														#trim lhs
+		my @wire =  split (/=/, $out);												#split on = to remove txt
+		my $out = pop (@wire);														#store time
+		$out = ltrim ($out);														#trim time					Collection Time look like
+		chomp $out;																	#remove newline				             THIS
+		my @fmt = split(/"/, $out);													#remove quotes		    	    2009-02-03T17:35:14.8125+08:00
+		pop (@fmt);																	#discard quotes
+		$out = pop (@fmt);															#store time
+		my @sams = split(/T/, $out);												#split date and time.
+		my $time = pop(@sams);														#put time in the $time
+		my $date = pop(@sams);														#put date in $date
+		my @dt = split(/-/, $date);													#split date on - and store in dt
+		my $dd = pop(@dt);															#pop the day
+		my $mm = pop(@dt);															#pop the month
+		my $yy = pop(@dt);															#pop the year
+		my @tm = split(/\+/, $time);												#split on +
+		pop (@tm);																	#discard the  time zone
+		my $tme = pop (@tm);														# store the time ie 17:35:14.8125
+		my @aargh = split(/:/,$tme);												#split into 17, 35 and 14.8125
+		my $ccxx_b = pop (@aargh);													#pop 14.8125
+		my $ccxx = trunc ( $ccxx_b, 2);												#truncate to just 14.81
+		my @no = split(/\./, $ccxx);												#split on the "."
+		my $cc = pop (@no);															#and pop the 81 into cc
+		my $ss = pop (@no);															# pop the 14 into ss
+		my $mmm = pop (@aargh);														# pop the mins
+		my $hh = pop (@aargh);														#pop the hr
+		print OUT "\n";																#put a newline
+		print OUT "$traceid,$traceid,$traceid,$traceid,$mm$dd$hh$mmm$ss$cc,";		# output the data. 4xTraceid is bcoz to format the data for the SQA FDC Macro
+		until ( $tmp[$i] =~ /<\/TR>/ )												#once the coll report is written, proceed to next file. loop until you encounter </TR>
+		{
+			if ( $tmp[$i] =~ /<S \/>/)												#this condition check is added due to the existence of non-XML tags in the 
+			{																		#input xml file. If unhandled, macro will not output the presence of this "VID" 
+				print OUT ",";														#to the output csv causing the coloums to jumble up.
+			}
+			if ( $tmp[$i] =~ /<F4>/ )												#parse and extract float data
+			{
+				my $temp = $tmp[$i];												#copy <F4>xx</F4> into temp variable.
+				my @alok = split (/<F4>/, $temp);									#split the variable first on <F4> and store in array
+				my $mouse = "@alok";												#copy arr into var and split again, copy into arr again,
+				my @temp2 = split (/<\/F4>/, $mouse);								#
+				my $fvalue = "@temp2";												#copy final numberic value into a variable.
+				chomp $fvalue;														#chomp to cut the crlf
+				$fvalue = ltrim ($fvalue);											#trim the lhs
+				print OUT "$fvalue,";												#print to file.
+			}
+			if ( $tmp[$i] =~ /<I4>/ )												#could have put the splitting and extractin only VID values in a sub routine 
+			{																		#but did not have a lot of data types to do this initially! :(
+				my $temp = $tmp[$i];
+				my @alok = split (/<I4>/, $temp);
+				my $mouse = "@alok";
+				my @temp2 = split (/<\/I4>/, $mouse);
+				my $ivalue = "@temp2";
+				chomp $ivalue;
+				$ivalue = ltrim ($ivalue);
+				print OUT "$ivalue,";
+			}
+			if ( $tmp[$i] =~ /<S>/ )
+			{
+				my $temp =$tmp[$i];
+				my @alok =split (/<S>/, $temp);
+				my $mouse = "@alok";
+				my @temp2 = split (/<\/S>/, $mouse);
+				my $svalue = "@temp2";
+				chomp $svalue;
+				$svalue = ltrim($svalue);
+				print OUT "$svalue,";
+			}	
+			if ( $tmp[$i] =~ /<I2>/ )
+			{
+				my $temp = $tmp[$i];
+				my @alok = split (/<I2>/, $temp);
+				my $mouse = "@alok";
+				my @temp2 = split (/<\/I2>/, $mouse);
+				my $i2value = "@temp2";
+				chomp $i2value;
+				$i2value = ltrim ($i2value);
+				print OUT "$i2value,";
+			}
+			$i++;
+     	}
+	}
+	if ( $tmp[$i] =~ /<TraceReport/ )												#if the line has a <TraceReport>, then
+	{
+		my $tr = $tmp[$i];															#copy the <TraceReport> line into variable "tr"
+		my @split_tr = split (/ /, $tr);											#split tr into discrete name=value pairs with space as delim and copy into array split_tr
+   		if ( $#split_tr eq 7)														#check how many elements are there after split, if 7, then we have a startTriggerEvent in the line.
+		{
+			pop (@split_tr);														#remove the startTriggerTme data that we dont want form the array.
+			my $rpttime = pop (@split_tr);											#get the report time.
+			$traceid = pop (@split_tr);												#get the traceId.
+			chomp $traceid;															#remove newline
+			$traceid=ltrim($traceid);												#trim the lhs
+			my @idea=split(/=/, $traceid);											#split on equal
+			my $hutch = pop (@idea);												#store "traceid"
+			my @spice = split(/"/,$hutch);											#remove quotes
+			$traceid = pop (@spice);												#get actual tid
+			$master++;
+		}
+		if ( $#split_tr eq 6 )														#line consists of only report time and trace id.
+		{
+			my $rpttime = pop (@split_tr);											#get report time.
+			$traceid = pop (@split_tr);												#get the trace id
+			chomp $traceid;															#remove newline
+			$traceid=ltrim($traceid);												#trim the lhs
+			my @idea=split(/=/, $traceid);											#split on equal
+			my $hutch = pop (@idea);												#store "traceid"
+			my @spice = split(/"/,$hutch);											#remove quotes
+			$traceid = pop (@spice);												#get actual tid
+			$master++;
+		}
+	}
+}
+print "Parse complete!\n";
+print "Parsed data is present in $file\n"
